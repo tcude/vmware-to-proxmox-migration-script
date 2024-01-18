@@ -1,4 +1,9 @@
 #!/bin/bash
+# Todo - Get rid of temp EFI
+#      - Add ability to choose between local-lvm and local-zfs
+#      - Find way to carry over MAC
+#      - Attempt to find way to fix networking post-migration automatically
+
 # Function to get user input with a default value
 get_input() {
     read -p "$1 [$2]: " input
@@ -86,17 +91,18 @@ function create_proxmox_vm() {
     #echo "Creating VM in Proxmox with UEFI..."
     #ssh $PROXMOX_USERNAME@$PROXMOX_SERVER "qm create $VM_ID --name $VM_NAME --memory 2048 --cores 2 --net0 virtio,bridge=vmbr0 --bios ovmf"
 
-    echo "Creating VM in Proxmox with UEFI and VLAN tag..."
+# Create the VM with UEFI, VLAN tag, and specify the SCSI hardware
+    echo "Creating VM in Proxmox with UEFI, VLAN tag, and SCSI hardware..."
     ssh $PROXMOX_USERNAME@$PROXMOX_SERVER "qm create $VM_ID --name $VM_NAME --memory 2048 --cores 2 --net0 virtio,bridge=vmbr69,tag=$VLAN_TAG --bios ovmf --scsihw virtio-scsi-pci"
-
+    
     # Import the disk to local-lvm storage
     echo "Importing disk to local-lvm storage..."
     ssh $PROXMOX_USERNAME@$PROXMOX_SERVER "qm importdisk $VM_ID $raw_path local-lvm"
 
-    # Attach the disk to the VM
+    # Attach the disk to the VM and set it as the first boot device
     local disk_name="vm-$VM_ID-disk-0"
-    echo "Attaching disk to VM..."
-    ssh $PROXMOX_USERNAME@$PROXMOX_SERVER "qm set $VM_ID --scsi0 local-lvm:$disk_name"
+    echo "Attaching disk to VM and setting it as the first boot device..."
+    ssh $PROXMOX_USERNAME@$PROXMOX_SERVER "qm set $VM_ID --scsi0 local-lvm:$disk_name --boot c --bootdisk scsi0"
 }
 
 # Main process
