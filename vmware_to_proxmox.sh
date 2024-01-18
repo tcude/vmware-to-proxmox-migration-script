@@ -74,7 +74,7 @@ function create_proxmox_vm() {
     ssh $PROXMOX_USERNAME@$PROXMOX_SERVER "qemu-img convert -f vmdk -O qcow2 $vmdk_file $qcow2_path"
 
     # Create the VM
-    ssh $PROXMOX_USERNAME@$PROXMOX_SERVER "qm create $VM_ID --name $VM_NAME --memory 2048 --cores 2 --net0 virtio,bridge=vmbr0"
+    ssh $PROXMOX_USERNAME@$PROXMOX_SERVER "qm create $VM_ID --name $VM_NAME --memory 2048 --cores 2 --net0 virtio,bridge=vmbr0.69,tag=80"
 
     # Import the disk to local-lvm storage
     echo "Importing disk to local-lvm storage..."
