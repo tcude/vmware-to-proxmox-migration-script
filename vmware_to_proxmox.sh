@@ -69,16 +69,21 @@ function create_proxmox_vm() {
     local vmdk_file=$(ssh $PROXMOX_USERNAME@$PROXMOX_SERVER "find /var/vm-migration -name '*.vmdk'")
     echo "Found .vmdk file: $vmdk_file"
     local qcow2_file="$VM_NAME.qcow2"
-    local qcow2_path="/var/lib/vz/images/$VM_ID/$qcow2_file"
-    echo "Creating directory for VM ID $VM_ID..."
-    ssh $PROXMOX_USERNAME@$PROXMOX_SERVER "mkdir -p /var/lib/vz/images/$VM_ID"
+    local qcow2_path="/var/tmp/$qcow2_file"
     echo "Converting .vmdk file to .qcow2 format..."
     ssh $PROXMOX_USERNAME@$PROXMOX_SERVER "qemu-img convert -f vmdk -O qcow2 $vmdk_file $qcow2_path"
 
-    # Create the VM and attach the disk
+    # Create the VM
     ssh $PROXMOX_USERNAME@$PROXMOX_SERVER "qm create $VM_ID --name $VM_NAME --memory 2048 --cores 2 --net0 virtio,bridge=vmbr0"
+
+    # Import the disk to local-lvm storage
+    echo "Importing disk to local-lvm storage..."
+    ssh $PROXMOX_USERNAME@$PROXMOX_SERVER "qm importdisk $VM_ID $qcow2_path local-lvm"
+
+    # Attach the disk to the VM
+    local disk_name="vm-$VM_ID-disk-0"
     echo "Attaching disk to VM..."
-    ssh $PROXMOX_USERNAME@$PROXMOX_SERVER "qm set $VM_ID --scsi0 local:$VM_ID/$qcow2_file"
+    ssh $PROXMOX_USERNAME@$PROXMOX_SERVER "qm set $VM_ID --scsi0 local-lvm:$disk_name"
 }
 
 # Main process
