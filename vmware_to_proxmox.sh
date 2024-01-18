@@ -48,36 +48,7 @@ function transfer_vm() {
     scp $VM_NAME.ova $PROXMOX_USERNAME@$PROXMOX_SERVER:/var/vm-migration/
 }
 
-# Convert VM to Proxmox format
-function convert_vm() {
-    echo "Converting VM to Proxmox format..."
-    ssh $PROXMOX_USERNAME@$PROXMOX_SERVER "tar -xvf /var/vm-migration/$VM_NAME.ova -C /var/vm-migration/"
-    local vmdk_file=$(ssh $PROXMOX_USERNAME@$PROXMOX_SERVER "find /var/vm-migration -name '*.vmdk'")
-    ssh $PROXMOX_USERNAME@$PROXMOX_SERVER "qemu-img convert -f vmdk -O qcow2 $vmdk_file /var/vm-migration/$VM_NAME.qcow2"
-}
-
-# Get the next VM ID
-#function get_next_vm_id() {
-#    echo "Getting next VM ID..."
-#    VM_LIST=$(ssh $PROXMOX_USERNAME@$PROXMOX_SERVER "pvesh get /cluster/resources --type vm")
-#    echo "VM List: $VM_LIST"
-#    NEXT_VM_ID=$(echo "$VM_LIST" | awk '/│ qemu\// {print $NF}' | sort -n | awk '$1<=998' | tail -1)
-#    let "NEXT_VM_ID++"
-#    echo "Next VM ID: $NEXT_VM_ID"
-#}
-
-## Create VM in Proxmox
-#function create_proxmox_vm() {
-#    echo "Creating VM in Proxmox..."
-#    VM_ID=$(get_next_vm_id)
-#    if ! [[ $VM_ID =~ ^[0-9]+$ ]]; then
-#        echo "Error: Invalid VM ID '$VM_ID'."
-#        exit 1
-#    fi
-#    ssh $PROXMOX_USERNAME@$PROXMOX_SERVER "qm create $VM_ID --name $VM_NAME --memory 2048 --cores 2 --net0 virtio,bridge=vmbr0"
-#}
-
-# Create VM in Proxmox
+# Create VM in Proxmox and attach the disk
 function create_proxmox_vm() {
     echo "Creating VM in Proxmox..."
     read -p "Enter the desired VM ID for Proxmox: " VM_ID
@@ -85,11 +56,32 @@ function create_proxmox_vm() {
         echo "Error: Invalid VM ID '$VM_ID'. Please enter a numeric value."
         exit 1
     fi
+    # Check if a VM with the given ID already exists
+    if ssh $PROXMOX_USERNAME@$PROXMOX_SERVER "qm status $VM_ID" &> /dev/null; then
+        echo "Error: VM with ID '$VM_ID' already exists. Please enter a different ID."
+        exit 1
+    fi
+
+    # Convert the disk before creating the VM
+    echo "Converting VM to Proxmox format..."
+    ssh $PROXMOX_USERNAME@$PROXMOX_SERVER "tar -xof /var/vm-migration/$VM_NAME.ova -C /var/vm-migration/"
+    echo "Finding .vmdk file..."
+    local vmdk_file=$(ssh $PROXMOX_USERNAME@$PROXMOX_SERVER "find /var/vm-migration -name '*.vmdk'")
+    echo "Found .vmdk file: $vmdk_file"
+    local qcow2_file="$VM_NAME.qcow2"
+    local qcow2_path="/var/lib/vz/images/$VM_ID/$qcow2_file"
+    echo "Creating directory for VM ID $VM_ID..."
+    ssh $PROXMOX_USERNAME@$PROXMOX_SERVER "mkdir -p /var/lib/vz/images/$VM_ID"
+    echo "Converting .vmdk file to .qcow2 format..."
+    ssh $PROXMOX_USERNAME@$PROXMOX_SERVER "qemu-img convert -f vmdk -O qcow2 $vmdk_file $qcow2_path"
+
+    # Create the VM and attach the disk
     ssh $PROXMOX_USERNAME@$PROXMOX_SERVER "qm create $VM_ID --name $VM_NAME --memory 2048 --cores 2 --net0 virtio,bridge=vmbr0"
+    echo "Attaching disk to VM..."
+    ssh $PROXMOX_USERNAME@$PROXMOX_SERVER "qm set $VM_ID --scsi0 local:$VM_ID/$qcow2_file"
 }
 
 # Main process
 export_vmware_vm
 transfer_vm
-convert_vm
 create_proxmox_vm
