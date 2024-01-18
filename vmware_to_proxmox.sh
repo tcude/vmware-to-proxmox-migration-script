@@ -1,8 +1,8 @@
 #!/bin/bash
-# Function to get user input
+# Function to get user input with a default value
 get_input() {
-    read -p "$1: " input
-    echo $input
+    read -p "$1 [$2]: " input
+    echo ${input:-$2}
 }
 
 # Check if ovftool is installed
@@ -19,12 +19,12 @@ fi
 
 # User inputs
 echo "Enter the details for VM migration"
-ESXI_SERVER=$(get_input "Enter the ESXi server hostname/IP")
-ESXI_USERNAME=$(get_input "Enter the ESXi server username")
+ESXI_SERVER=$(get_input "Enter the ESXi server hostname/IP" "default_esxi_server")
+ESXI_USERNAME=$(get_input "Enter the ESXi server username" "root")
 read -sp "Enter the ESXi server password: " ESXI_PASSWORD
 echo
-PROXMOX_SERVER=$(get_input "Enter the Proxmox server hostname/IP")
-PROXMOX_USERNAME=$(get_input "Enter the Proxmox server username")
+PROXMOX_SERVER=$(get_input "Enter the Proxmox server hostname/IP" "default_proxmox_server")
+PROXMOX_USERNAME=$(get_input "Enter the Proxmox server username" "root")
 VM_NAME=$(get_input "Enter the name of the VM to migrate")
 
 # Export VM from VMware
