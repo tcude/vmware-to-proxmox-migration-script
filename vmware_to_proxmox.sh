@@ -5,6 +5,18 @@ get_input() {
     echo $input
 }
 
+# Check if ovftool is installed
+if ! ovftool --version &> /dev/null; then
+    echo "Error: ovftool is not installed or not found in PATH. Please install ovftool and try again."
+    exit 1
+fi
+
+# Check if jq is installed
+if ! jq --version &> /dev/null; then
+    echo "Error: jq is not installed or not found in PATH. Please install jq and try again."
+    exit 1
+fi
+
 # User inputs
 echo "Enter the details for VM migration"
 ESXI_SERVER=$(get_input "Enter the ESXi server hostname/IP")
