@@ -62,23 +62,32 @@ function create_proxmox_vm() {
         exit 1
     fi
 
-    # Convert the disk before creating the VM
-    echo "Converting VM to Proxmox format..."
-    ssh $PROXMOX_USERNAME@$PROXMOX_SERVER "tar -xof /var/vm-migration/$VM_NAME.ova -C /var/vm-migration/"
+ # Extract OVF from OVA
+    echo "Extracting OVF from OVA..."
+    ssh $PROXMOX_USERNAME@$PROXMOX_SERVER "tar -xvf /var/vm-migration/$VM_NAME.ova -C /var/vm-migration/"
+
+    # Find the OVF file
+    local ovf_file=$(ssh $PROXMOX_USERNAME@$PROXMOX_SERVER "find /var/vm-migration -name '*.ovf'")
+    echo "Found OVF file: $ovf_file"
+
+    # Find the VMDK file
     echo "Finding .vmdk file..."
     local vmdk_file=$(ssh $PROXMOX_USERNAME@$PROXMOX_SERVER "find /var/vm-migration -name '*.vmdk'")
     echo "Found .vmdk file: $vmdk_file"
-    local qcow2_file="$VM_NAME.qcow2"
-    local qcow2_path="/var/tmp/$qcow2_file"
-    echo "Converting .vmdk file to .qcow2 format..."
-    ssh $PROXMOX_USERNAME@$PROXMOX_SERVER "qemu-img convert -f vmdk -O qcow2 $vmdk_file $qcow2_path"
 
-    # Create the VM
-    ssh $PROXMOX_USERNAME@$PROXMOX_SERVER "qm create $VM_ID --name $VM_NAME --memory 2048 --cores 2 --net0 virtio,bridge=vmbr0.69,tag=80"
+    # Convert the VMDK file to raw format
+    local raw_file="$VM_NAME.raw"
+    local raw_path="/var/tmp/$raw_file"
+    echo "Converting .vmdk file to raw format..."
+    ssh $PROXMOX_USERNAME@$PROXMOX_SERVER "qemu-img convert -f vmdk -O raw $vmdk_file $raw_path"
+
+    # Create the VM with UEFI if needed
+    echo "Creating VM in Proxmox with UEFI..."
+    ssh $PROXMOX_USERNAME@$PROXMOX_SERVER "qm create $VM_ID --name $VM_NAME --memory 2048 --cores 2 --net0 virtio,bridge=vmbr0 --bios ovmf"
 
     # Import the disk to local-lvm storage
     echo "Importing disk to local-lvm storage..."
-    ssh $PROXMOX_USERNAME@$PROXMOX_SERVER "qm importdisk $VM_ID $qcow2_path local-lvm"
+    ssh $PROXMOX_USERNAME@$PROXMOX_SERVER "qm importdisk $VM_ID $raw_path local-lvm"
 
     # Attach the disk to the VM
     local disk_name="vm-$VM_ID-disk-0"
