@@ -79,17 +79,24 @@ function create_proxmox_vm() {
 
     # Find the VMDK file
     echo "Finding .vmdk file..."
-    local vmdk_file=$(ssh $PROXMOX_USERNAME@$PROXMOX_SERVER "find /var/vm-migration -name '*.vmdk'")
+    local vmdk_file=$(ssh $PROXMOX_USERNAME@$PROXMOX_SERVER "find /var/vm-migration -name '$VM_NAME-disk*.vmdk'")
     echo "Found .vmdk file: $vmdk_file"
+
+    # Ensure that only one .vmdk file is found
+    if [[ $(echo "$vmdk_file" | wc -l) -ne 1 ]]; then
+       echo "Error: Multiple or no .vmdk files found."
+       exit 1
+    fi
 
     # Convert the VMDK file to raw format
     local raw_file="$VM_NAME.raw"
     local raw_path="/var/tmp/$raw_file"
     echo "Converting .vmdk file to raw format..."
-    ssh $PROXMOX_USERNAME@$PROXMOX_SERVER "qemu-img convert -f vmdk -O raw $vmdk_file $raw_path"
+    ssh $PROXMOX_USERNAME@$PROXMOX_SERVER "qemu-img convert -f vmdk -O raw '$vmdk_file' '$raw_path'"
 
     # Create the VM with UEFI BIOS, VLAN tag, and specify the SCSI hardware
     echo "Creating VM in Proxmox with UEFI, VLAN tag, and SCSI hardware..."
+    echo "VM ID is: $VM_ID"
     ssh $PROXMOX_USERNAME@$PROXMOX_SERVER "qm create $VM_ID --name $VM_NAME --memory 2048 --cores 2 --net0 virtio,bridge=vmbr69,tag=$VLAN_TAG --bios ovmf --scsihw virtio-scsi-pci"
     
     # Import the disk to local-lvm storage
