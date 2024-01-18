@@ -1,8 +1,9 @@
 #!/bin/bash
-# Todo - Get rid of temp EFI
+# To-do - Get rid of temp EFI
 #      - Add ability to choose between local-lvm and local-zfs
 #      - Find way to carry over MAC
 #      - Attempt to find way to fix networking post-migration automatically
+#      - Get script to pull specs of ESXi VM and use them when creating Proxmox VM
 
 # Function to get user input with a default value
 get_input() {
