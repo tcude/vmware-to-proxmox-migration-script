@@ -57,20 +57,32 @@ function convert_vm() {
 }
 
 # Get the next VM ID
-function get_next_vm_id() {
-    echo "Getting next VM ID..."
-    # Get the list of VMs, sort by VM ID, get the last one, and increment by one
-    NEXT_VM_ID=$(ssh $PROXMOX_USERNAME@$PROXMOX_SERVER "pvesh get /cluster/resources --type vm" | jq -r '.[].vmid' | sort -n | tail -1)
-    let "NEXT_VM_ID++"
-    echo $NEXT_VM_ID
-}
+#function get_next_vm_id() {
+#    echo "Getting next VM ID..."
+#    VM_LIST=$(ssh $PROXMOX_USERNAME@$PROXMOX_SERVER "pvesh get /cluster/resources --type vm")
+#    echo "VM List: $VM_LIST"
+#    NEXT_VM_ID=$(echo "$VM_LIST" | awk '/│ qemu\// {print $NF}' | sort -n | awk '$1<=998' | tail -1)
+#    let "NEXT_VM_ID++"
+#    echo "Next VM ID: $NEXT_VM_ID"
+#}
+
+## Create VM in Proxmox
+#function create_proxmox_vm() {
+#    echo "Creating VM in Proxmox..."
+#    VM_ID=$(get_next_vm_id)
+#    if ! [[ $VM_ID =~ ^[0-9]+$ ]]; then
+#        echo "Error: Invalid VM ID '$VM_ID'."
+#        exit 1
+#    fi
+#    ssh $PROXMOX_USERNAME@$PROXMOX_SERVER "qm create $VM_ID --name $VM_NAME --memory 2048 --cores 2 --net0 virtio,bridge=vmbr0"
+#}
 
 # Create VM in Proxmox
 function create_proxmox_vm() {
     echo "Creating VM in Proxmox..."
-    VM_ID=$(get_next_vm_id)
+    read -p "Enter the desired VM ID for Proxmox: " VM_ID
     if ! [[ $VM_ID =~ ^[0-9]+$ ]]; then
-        echo "Error: Invalid VM ID '$VM_ID'."
+        echo "Error: Invalid VM ID '$VM_ID'. Please enter a numeric value."
         exit 1
     fi
     ssh $PROXMOX_USERNAME@$PROXMOX_SERVER "qm create $VM_ID --name $VM_NAME --memory 2048 --cores 2 --net0 virtio,bridge=vmbr0"
