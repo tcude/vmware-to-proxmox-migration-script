@@ -31,6 +31,15 @@ VM_NAME=$(get_input "Enter the name of the VM to migrate")
 
 # Export VM from VMware
 function export_vmware_vm() {
+    local ova_file="$VM_NAME.ova"
+    if [ -f "$ova_file" ]; then
+        read -p "File $ova_file already exists. Overwrite? (y/n): " choice
+        if [ "$choice" != "y" ]; then
+            echo "Export cancelled."
+            exit 1
+        fi
+        rm -f "$ova_file"
+    fi
     echo "Exporting VM from VMware..."
     echo $ESXI_PASSWORD | ovftool --sourceType=VI --acceptAllEulas --noSSLVerify --skipManifestCheck --diskMode=thin --name=$VM_NAME vi://$ESXI_USERNAME@$ESXI_SERVER/$VM_NAME $VM_NAME.ova
 }
@@ -45,7 +54,9 @@ function transfer_vm() {
 # Convert VM to Proxmox format
 function convert_vm() {
     echo "Converting VM to Proxmox format..."
-    echo $PROXMOX_PASSWORD | ssh $PROXMOX_USERNAME@$PROXMOX_SERVER "qemu-img convert -f ova -O qcow2 /var/vm-migration/$VM_NAME.ova /var/vm-migration/$VM_NAME.qcow2"
+    echo $PROXMOX_PASSWORD | ssh $PROXMOX_USERNAME@$PROXMOX_SERVER "tar -xvf /var/vm-migration/$VM_NAME.ova -C /var/vm-migration/"
+    local vmdk_file=$(ssh $PROXMOX_USERNAME@$PROXMOX_SERVER "find /var/vm-migration -name '*.vmdk'")
+    echo $PROXMOX_PASSWORD | ssh $PROXMOX_USERNAME@$PROXMOX_SERVER "qemu-img convert -f vmdk -O qcow2 $vmdk_file /var/vm-migration/$VM_NAME.qcow2"
 }
 
 # Get the next VM ID
@@ -61,6 +72,10 @@ function get_next_vm_id() {
 function create_proxmox_vm() {
     echo "Creating VM in Proxmox..."
     VM_ID=$(get_next_vm_id)
+    if ! [[ $VM_ID =~ ^[0-9]+$ ]]; then
+        echo "Error: Invalid VM ID '$VM_ID'."
+        exit 1
+    fi
     echo $PROXMOX_PASSWORD | ssh $PROXMOX_USERNAME@$PROXMOX_SERVER "qm create $VM_ID --name $VM_NAME --memory 2048 --cores 2 --net0 virtio,bridge=vmbr0"
 }
 
