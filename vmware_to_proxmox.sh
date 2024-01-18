@@ -26,6 +26,7 @@ echo
 PROXMOX_SERVER=$(get_input "Enter the Proxmox server hostname/IP" "default_proxmox_server")
 PROXMOX_USERNAME=$(get_input "Enter the Proxmox server username" "root")
 VM_NAME=$(get_input "Enter the name of the VM to migrate")
+VLAN_TAG=$(get_input "Enter the VLAN tag" "80")
 
 # Export VM from VMware
 function export_vmware_vm() {
@@ -82,8 +83,11 @@ function create_proxmox_vm() {
     ssh $PROXMOX_USERNAME@$PROXMOX_SERVER "qemu-img convert -f vmdk -O raw $vmdk_file $raw_path"
 
     # Create the VM with UEFI if needed
-    echo "Creating VM in Proxmox with UEFI..."
-    ssh $PROXMOX_USERNAME@$PROXMOX_SERVER "qm create $VM_ID --name $VM_NAME --memory 2048 --cores 2 --net0 virtio,bridge=vmbr0 --bios ovmf"
+    #echo "Creating VM in Proxmox with UEFI..."
+    #ssh $PROXMOX_USERNAME@$PROXMOX_SERVER "qm create $VM_ID --name $VM_NAME --memory 2048 --cores 2 --net0 virtio,bridge=vmbr0 --bios ovmf"
+
+    echo "Creating VM in Proxmox with UEFI and VLAN tag..."
+    ssh $PROXMOX_USERNAME@$PROXMOX_SERVER "qm create $VM_ID --name $VM_NAME --memory 2048 --cores 2 --net0 virtio,bridge=vmbr69,tag=$VLAN_TAG --bios ovmf"
 
     # Import the disk to local-lvm storage
     echo "Importing disk to local-lvm storage..."
