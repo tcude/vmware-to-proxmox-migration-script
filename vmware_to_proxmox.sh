@@ -68,7 +68,7 @@ function create_proxmox_vm() {
         exit 1
     fi
 
- # Extract OVF from OVA
+    # Extract OVF from OVA
     echo "Extracting OVF from OVA..."
     ssh $PROXMOX_USERNAME@$PROXMOX_SERVER "tar -xvf /var/vm-migration/$VM_NAME.ova -C /var/vm-migration/"
 
@@ -87,11 +87,7 @@ function create_proxmox_vm() {
     echo "Converting .vmdk file to raw format..."
     ssh $PROXMOX_USERNAME@$PROXMOX_SERVER "qemu-img convert -f vmdk -O raw $vmdk_file $raw_path"
 
-    # Create the VM with UEFI if needed
-    #echo "Creating VM in Proxmox with UEFI..."
-    #ssh $PROXMOX_USERNAME@$PROXMOX_SERVER "qm create $VM_ID --name $VM_NAME --memory 2048 --cores 2 --net0 virtio,bridge=vmbr0 --bios ovmf"
-
-# Create the VM with UEFI, VLAN tag, and specify the SCSI hardware
+    # Create the VM with UEFI BIOS, VLAN tag, and specify the SCSI hardware
     echo "Creating VM in Proxmox with UEFI, VLAN tag, and SCSI hardware..."
     ssh $PROXMOX_USERNAME@$PROXMOX_SERVER "qm create $VM_ID --name $VM_NAME --memory 2048 --cores 2 --net0 virtio,bridge=vmbr69,tag=$VLAN_TAG --bios ovmf --scsihw virtio-scsi-pci"
     
