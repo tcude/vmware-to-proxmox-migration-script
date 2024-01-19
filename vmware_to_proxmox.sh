@@ -4,6 +4,7 @@
 #      - Find way to carry over MAC
 #      - Attempt to find way to fix networking post-migration automatically
 #      - Get script to pull specs of ESXi VM and use them when creating Proxmox VM
+#      - Add functionality to remove old .ova files from local machine
 
 # Function to get user input with a default value
 get_input() {
