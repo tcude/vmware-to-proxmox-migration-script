@@ -6,6 +6,9 @@
 #      - Get script to pull specs of ESXi VM and use them when creating Proxmox VM
 #      - Add functionality to remove old .ova files from local machine
 
+### PREREQUISITES ###
+# - Install ovftool on the machine you are running the script on
+
 # Function to get user input with a default value
 get_input() {
     read -p "$1 [$2]: " input
