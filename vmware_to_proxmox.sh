@@ -27,14 +27,14 @@ if ! jq --version &> /dev/null; then
     exit 1
 fi
 
-# User inputs
-echo "Enter the details for VM migration"
-ESXI_SERVER=$(get_input "Enter the ESXi server hostname/IP" "default_esxi_server")
-ESXI_USERNAME=$(get_input "Enter the ESXi server username" "root")
-read -sp "Enter the ESXi server password: " ESXI_PASSWORD
-echo
-PROXMOX_SERVER=$(get_input "Enter the Proxmox server hostname/IP" "default_proxmox_server")
-PROXMOX_USERNAME=$(get_input "Enter the Proxmox server username" "root")
+### Set the following variables to their respective values
+echo "Using hardcoded details for VM migration"
+ESXI_SERVER="default_esxi_server" # Set your ESXi server hostname/IP
+ESXI_USERNAME="root" # Set your ESXi server username
+ESXI_PASSWORD="your_esxi_password" # Set your ESXi server password,
+PROXMOX_SERVER="default_proxmox_server" # Set your Proxmox server hostname/IP
+PROXMOX_USERNAME="root" # Set your Proxmox server username
+
 VM_NAME=$(get_input "Enter the name of the VM to migrate")
 VLAN_TAG=$(get_input "Enter the VLAN tag" "80")
 
