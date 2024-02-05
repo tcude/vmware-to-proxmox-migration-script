@@ -1,5 +1,5 @@
 #!/bin/bash
-# To-do - Get rid of temp EFI
+# To-do:
 #      - Add ability to choose between local-lvm and local-zfs
 #      - Find way to carry over MAC
 #      - Attempt to find way to fix networking post-migration automatically
@@ -8,6 +8,8 @@
 
 ### PREREQUISITES ###
 # - Install ovftool on the machine you are running the script on
+# - This script assumes you have key-based authentication already configured on your Proxmox host. If you do not, add your public key
+# - You must hardcode the variables for your esxi and proxmox IP, user, etc.  I previously had the script prompt the user for input every time but that isn't efficient when migrating multiple VMs in quick succession
 
 # Function to get user input with a default value
 get_input() {
@@ -37,6 +39,7 @@ PROXMOX_USERNAME="root" # Set your Proxmox server username
 
 VM_NAME=$(get_input "Enter the name of the VM to migrate")
 VLAN_TAG=$(get_input "Enter the VLAN tag" "80")
+VM_ID=$(get_input "Enter the VM ID you would like to use in Proxmox")
 
 # Export VM from VMware
 function export_vmware_vm() {
@@ -62,7 +65,6 @@ function transfer_vm() {
 # Create VM in Proxmox and attach the disk
 function create_proxmox_vm() {
     echo "Creating VM in Proxmox..."
-    read -p "Enter the desired VM ID for Proxmox: " VM_ID
     if ! [[ $VM_ID =~ ^[0-9]+$ ]]; then
         echo "Error: Invalid VM ID '$VM_ID'. Please enter a numeric value."
         exit 1
@@ -113,7 +115,20 @@ function create_proxmox_vm() {
     ssh $PROXMOX_USERNAME@$PROXMOX_SERVER "qm set $VM_ID --scsi0 local-lvm:$disk_name --boot c --bootdisk scsi0"
 }
 
+# Clear out temp files from /var/vm-migrations
+function cleanup_migration_directory() {
+    echo "Cleaning up /var/vm-migration directory..."
+    ssh $PROXMOX_USERNAME@$PROXMOX_SERVER "rm -rf /var/vm-migration/*"
+}
+
+function cleanup_local_ova_files() {
+    echo "Removing local .ova files..."
+    rm -f "$VM_NAME.ova"
+}
+
 # Main process
 export_vmware_vm
 transfer_vm
 create_proxmox_vm
+cleanup_migration_directory
+cleanup_local_ova_files
