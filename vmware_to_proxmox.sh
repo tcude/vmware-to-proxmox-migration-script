@@ -1,10 +1,9 @@
 #!/bin/bash
 # To-do:
-#      - Add ability to choose between local-lvm and local-zfs
+#      - Add ability to choose between local-lvm and local-zfs - currently defaults to local-lvm
 #      - Find way to carry over MAC
 #      - Attempt to find way to fix networking post-migration automatically
 #      - Get script to pull specs of ESXi VM and use them when creating Proxmox VM
-#      - Add functionality to remove old .ova files from local machine
 
 ### PREREQUISITES ###
 # - Install ovftool on the machine you are running the script on
