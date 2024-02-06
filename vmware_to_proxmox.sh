@@ -1,9 +1,10 @@
 #!/bin/bash
 # To-do:
-#      - Add ability to choose between local-lvm and local-zfs - currently defaults to local-lvm
+#      - Add ability to choose between local-lvm and local-zfs
 #      - Find way to carry over MAC
 #      - Attempt to find way to fix networking post-migration automatically
 #      - Get script to pull specs of ESXi VM and use them when creating Proxmox VM
+#      - Add functionality to remove old .ova files from local machine
 
 ### PREREQUISITES ###
 # - Install ovftool on the machine you are running the script on
@@ -39,6 +40,7 @@ PROXMOX_USERNAME="root" # Set your Proxmox server username
 VM_NAME=$(get_input "Enter the name of the VM to migrate")
 VLAN_TAG=$(get_input "Enter the VLAN tag" "80")
 VM_ID=$(get_input "Enter the VM ID you would like to use in Proxmox")
+STORAGE_TYPE=$(get_input "Enter the storage type (local-lvm or local-zfs)" "local-lvm")
 
 # Export VM from VMware
 function export_vmware_vm() {
@@ -68,79 +70,81 @@ function create_proxmox_vm() {
         echo "Error: Invalid VM ID '$VM_ID'. Please enter a numeric value."
         exit 1
     fi
-    # Check for VM that already exists with provided VM ID
+    # Check if a VM with the given ID already exists
     if ssh $PROXMOX_USERNAME@$PROXMOX_SERVER "qm status $VM_ID" &> /dev/null; then
         echo "Error: VM with ID '$VM_ID' already exists. Please enter a different ID."
         exit 1
     fi
 
+    # Extract OVF from OVA
     echo "Extracting OVF from OVA..."
     ssh $PROXMOX_USERNAME@$PROXMOX_SERVER "tar -xvf /var/vm-migration/$VM_NAME.ova -C /var/vm-migration/"
 
+    # Find the OVF file
     local ovf_file=$(ssh $PROXMOX_USERNAME@$PROXMOX_SERVER "find /var/vm-migration -name '*.ovf'")
     echo "Found OVF file: $ovf_file"
 
+    # Find the VMDK file
     echo "Finding .vmdk file..."
     local vmdk_file=$(ssh $PROXMOX_USERNAME@$PROXMOX_SERVER "find /var/vm-migration -name '$VM_NAME-disk*.vmdk'")
     echo "Found .vmdk file: $vmdk_file"
 
-    # Check for ensuring only one .vmdk file is found
+    # Ensure that only one .vmdk file is found
     if [[ $(echo "$vmdk_file" | wc -l) -ne 1 ]]; then
        echo "Error: Multiple or no .vmdk files found."
        exit 1
     fi
 
-    # Convert .vmdk file to raw format
+    # Convert the VMDK file to raw format
     local raw_file="$VM_NAME.raw"
     local raw_path="/var/tmp/$raw_file"
     echo "Converting .vmdk file to raw format..."
     ssh $PROXMOX_USERNAME@$PROXMOX_SERVER "qemu-img convert -f vmdk -O raw '$vmdk_file' '$raw_path'"
 
-    # Create the VM
+    # Create the VM with UEFI BIOS, VLAN tag, and specify the SCSI hardware
     echo "Creating VM in Proxmox with UEFI, VLAN tag, and SCSI hardware..."
     echo "VM ID is: $VM_ID"
     ssh $PROXMOX_USERNAME@$PROXMOX_SERVER "qm create $VM_ID --name $VM_NAME --memory 2048 --cores 2 --net0 virtio,bridge=vmbr69,tag=$VLAN_TAG --bios ovmf --scsihw virtio-scsi-pci"
 
-    # Import disk to local-lvm storage
-    echo "Importing disk to local-lvm storage..."
-    ssh $PROXMOX_USERNAME@$PROXMOX_SERVER "qm importdisk $VM_ID $raw_path local-lvm"
+    # Import the disk to the selected storage
+    echo "Importing disk to $STORAGE_TYPE storage..."
+    ssh $PROXMOX_USERNAME@$PROXMOX_SERVER "qm importdisk $VM_ID $raw_path $STORAGE_TYPE"
 
-    # Attach disk to VM and set it as first boot device
+    # Attach the disk to the VM and set it as the first boot device
     local disk_name="vm-$VM_ID-disk-0"
     echo "Attaching disk to VM and setting it as the first boot device..."
     ssh $PROXMOX_USERNAME@$PROXMOX_SERVER "qm set $VM_ID --scsi0 local-lvm:$disk_name --boot c --bootdisk scsi0"
 
 }
 
-# Clean up files from /var/vm-migrations on proxmox host
+# Clear out temp files from /var/vm-migrations
 function cleanup_migration_directory() {
     echo "Cleaning up /var/vm-migration directory..."
     ssh $PROXMOX_USERNAME@$PROXMOX_SERVER "rm -rf /var/vm-migration/*"
 }
 
-# Clean up .ova files from local
 function cleanup_local_ova_files() {
     echo "Removing local .ova files..."
     rm -f "$VM_NAME.ova"
 }
 
-# Add an EFI disk to the VM
+# Add an EFI disk to the VM after all other operations have concluded
 function add_efi_disk_to_vm() {
     echo "Adding EFI disk to the VM..."
-    local vg_name="pve" #LVM volume group name - should be this by default
+    local vg_name="pve" # The actual LVM volume group name
     local efi_disk_size="4M"
     local efi_disk="vm-$VM_ID-disk-1"
     
-    # Create EFI disk as a LV
+    # Create the EFI disk as a logical volume
     echo "Creating EFI disk as a logical volume..."
     ssh $PROXMOX_USERNAME@$PROXMOX_SERVER "lvcreate -L $efi_disk_size -n $efi_disk $vg_name" || {
         echo "Failed to create EFI disk logical volume."
         exit 1
     }
 
-    # Attach EFI disk to VM
+    # Attach the EFI disk to the VM
     echo "Attaching EFI disk to VM..."
-    ssh $PROXMOX_USERNAME@$PROXMOX_SERVER "qm set $VM_ID --efidisk0 local-lvm:$efi_disk,size=$efi_disk_size,efitype=4m,pre-enrolled-keys=1" || {
+    ssh $PROXMOX_USERNAME@$PROXMOX_SERVER "qm set $VM_ID --efidisk0 $STORAGE_TYPE:$efi_disk,size=$efi_disk_size,efitype=4m,pre-enrolled-keys=1" || {
         echo "Failed to add EFI disk to VM."
         exit 1
     }
