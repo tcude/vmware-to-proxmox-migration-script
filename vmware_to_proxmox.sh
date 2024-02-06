@@ -1,6 +1,5 @@
 #!/bin/bash
 # To-do:
-#      - Add ability to choose between local-lvm and local-zfs
 #      - Find way to carry over MAC
 #      - Attempt to find way to fix networking post-migration automatically
 #      - Get script to pull specs of ESXi VM and use them when creating Proxmox VM
@@ -149,6 +148,11 @@ function add_efi_disk_to_vm() {
         exit 1
     }
 }
+
+echo "Migration completed. Please remember to install and start the qemu-guest-agent inside the VM."
+echo "For Debian/Ubuntu: sudo apt-get update && sudo apt-get install qemu-guest-agent"
+echo "For CentOS/RHEL: sudo yum install qemu-guest-agent"
+echo "Then, enable and start the service: sudo systemctl enable --now qemu-guest-agent"
 
 # Main process
 export_vmware_vm
