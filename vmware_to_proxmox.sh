@@ -153,6 +153,9 @@ echo "Migration completed. Please remember to install and start the qemu-guest-a
 echo "For Debian/Ubuntu: sudo apt-get update && sudo apt-get install qemu-guest-agent"
 echo "For CentOS/RHEL: sudo yum install qemu-guest-agent"
 echo "Then, enable and start the service: sudo systemctl enable --now qemu-guest-agent"
+echo ""
+echo "You will also likely need to update your network interace name on the VM.  This can be done by"
+echo "running ip ad to grab the new interface name and then updating what is stored in /etc/netplan/00-installer-config.yaml"
 
 # Main process
 export_vmware_vm
