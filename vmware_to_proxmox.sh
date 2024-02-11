@@ -1,14 +1,17 @@
 #!/bin/bash
 # To-do:
+#      - Add ability to choose between local-lvm and local-zfs
 #      - Find way to carry over MAC
 #      - Attempt to find way to fix networking post-migration automatically
 #      - Get script to pull specs of ESXi VM and use them when creating Proxmox VM
 #      - Add functionality to remove old .ova files from local machine
 
 ### PREREQUISITES ###
-# - Install ovftool on the machine you are running the script on
-# - This script assumes you have key-based authentication already configured on your Proxmox host. If you do not, add your public key
-# - You must hardcode the variables for your esxi and proxmox IP, user, etc.  I previously had the script prompt the user for input every time but that isn't efficient when migrating multiple VMs in quick succession
+# - Install ovftool on the Proxmox host
+# - Ensure you have key-based authentication configured for any remote connections needed
+# - Hardcode the variables for your ESXi IP, user, etc.
+
+# This script is intended to be run on your Proxmox host
 
 # Function to get user input with a default value
 get_input() {
@@ -33,59 +36,53 @@ echo "Using hardcoded details for VM migration"
 ESXI_SERVER="default_esxi_server" # Set your ESXi server hostname/IP
 ESXI_USERNAME="root" # Set your ESXi server username
 ESXI_PASSWORD="your_esxi_password" # Set your ESXi server password,
-PROXMOX_SERVER="default_proxmox_server" # Set your Proxmox server hostname/IP
-PROXMOX_USERNAME="root" # Set your Proxmox server username
 
 VM_NAME=$(get_input "Enter the name of the VM to migrate")
 VLAN_TAG=$(get_input "Enter the VLAN tag" "80")
 VM_ID=$(get_input "Enter the VM ID you would like to use in Proxmox")
 STORAGE_TYPE=$(get_input "Enter the storage type (local-lvm or local-zfs)" "local-lvm")
 
+# Check if a VM with the given ID already exists before proceeding
+if qm status $VM_ID &> /dev/null; then
+    echo "Error: VM with ID '$VM_ID' already exists. Please enter a different ID."
+    exit 1
+fi
+
+if ! [[ $VM_ID =~ ^[0-9]+$ ]] || [[ $VM_ID -le 99 ]]; then
+    echo "Error: Invalid VM ID '$VM_ID'. Please enter a numeric value greater than 99."
+    exit 1
+fi
+
 # Export VM from VMware
 function export_vmware_vm() {
-    local ova_file="$VM_NAME.ova"
+    local ova_file="/var/vm-migration/$VM_NAME.ova"
     if [ -f "$ova_file" ]; then
-        read -p "File $ova_file already exists. Overwrite? (y/n): " choice
+        read -p "File $ova_file already exists. Overwrite? (y/n) [y]: " choice
+        choice=${choice:-y}
         if [ "$choice" != "y" ]; then
             echo "Export cancelled."
             exit 1
         fi
         rm -f "$ova_file"
     fi
-    echo "Exporting VM from VMware..."
-    echo $ESXI_PASSWORD | ovftool --sourceType=VI --acceptAllEulas --noSSLVerify --skipManifestCheck --diskMode=thin --name=$VM_NAME vi://$ESXI_USERNAME@$ESXI_SERVER/$VM_NAME $VM_NAME.ova
-}
-
-# Transfer VM to Proxmox
-function transfer_vm() {
-    echo "Transferring VM to Proxmox..."
-    scp $VM_NAME.ova $PROXMOX_USERNAME@$PROXMOX_SERVER:/var/vm-migration/
+    echo "Exporting VM from VMware directly to Proxmox..."
+    echo $ESXI_PASSWORD | ovftool --sourceType=VI --acceptAllEulas --noSSLVerify --skipManifestCheck --diskMode=thin --name=$VM_NAME vi://$ESXI_USERNAME@$ESXI_SERVER/$VM_NAME $ova_file
 }
 
 # Create VM in Proxmox and attach the disk
 function create_proxmox_vm() {
-    echo "Creating VM in Proxmox..."
-    if ! [[ $VM_ID =~ ^[0-9]+$ ]]; then
-        echo "Error: Invalid VM ID '$VM_ID'. Please enter a numeric value."
-        exit 1
-    fi
-    # Check if a VM with the given ID already exists
-    if ssh $PROXMOX_USERNAME@$PROXMOX_SERVER "qm status $VM_ID" &> /dev/null; then
-        echo "Error: VM with ID '$VM_ID' already exists. Please enter a different ID."
-        exit 1
-    fi
 
     # Extract OVF from OVA
     echo "Extracting OVF from OVA..."
-    ssh $PROXMOX_USERNAME@$PROXMOX_SERVER "tar -xvf /var/vm-migration/$VM_NAME.ova -C /var/vm-migration/"
+    tar -xvf /var/vm-migration/$VM_NAME.ova -C /var/vm-migration/
 
     # Find the OVF file
-    local ovf_file=$(ssh $PROXMOX_USERNAME@$PROXMOX_SERVER "find /var/vm-migration -name '*.ovf'")
+    local ovf_file=$(find /var/vm-migration -name '*.ovf')
     echo "Found OVF file: $ovf_file"
 
     # Find the VMDK file
     echo "Finding .vmdk file..."
-    local vmdk_file=$(ssh $PROXMOX_USERNAME@$PROXMOX_SERVER "find /var/vm-migration -name '$VM_NAME-disk*.vmdk'")
+    local vmdk_file=$(find /var/vm-migration -name "$VM_NAME-disk*.vmdk")
     echo "Found .vmdk file: $vmdk_file"
 
     # Ensure that only one .vmdk file is found
@@ -98,33 +95,27 @@ function create_proxmox_vm() {
     local raw_file="$VM_NAME.raw"
     local raw_path="/var/tmp/$raw_file"
     echo "Converting .vmdk file to raw format..."
-    ssh $PROXMOX_USERNAME@$PROXMOX_SERVER "qemu-img convert -f vmdk -O raw '$vmdk_file' '$raw_path'"
+    qemu-img convert -f vmdk -O raw "$vmdk_file" "$raw_path"
 
     # Create the VM with UEFI BIOS, VLAN tag, and specify the SCSI hardware
     echo "Creating VM in Proxmox with UEFI, VLAN tag, and SCSI hardware..."
     echo "VM ID is: $VM_ID"
-    ssh $PROXMOX_USERNAME@$PROXMOX_SERVER "qm create $VM_ID --name $VM_NAME --memory 2048 --cores 2 --net0 virtio,bridge=vmbr69,tag=$VLAN_TAG --bios ovmf --scsihw virtio-scsi-pci"
+    qm create $VM_ID --name $VM_NAME --memory 2048 --cores 2 --net0 virtio,bridge=vmbr69,tag=$VLAN_TAG --bios ovmf --scsihw virtio-scsi-pci
 
     # Import the disk to the selected storage
     echo "Importing disk to $STORAGE_TYPE storage..."
-    ssh $PROXMOX_USERNAME@$PROXMOX_SERVER "qm importdisk $VM_ID $raw_path $STORAGE_TYPE"
+    qm importdisk $VM_ID $raw_path $STORAGE_TYPE
 
     # Attach the disk to the VM and set it as the first boot device
     local disk_name="vm-$VM_ID-disk-0"
     echo "Attaching disk to VM and setting it as the first boot device..."
-    ssh $PROXMOX_USERNAME@$PROXMOX_SERVER "qm set $VM_ID --scsi0 local-lvm:$disk_name --boot c --bootdisk scsi0"
-
+    qm set $VM_ID --scsi0 $STORAGE_TYPE:$disk_name --boot c --bootdisk scsi0
 }
 
 # Clear out temp files from /var/vm-migrations
 function cleanup_migration_directory() {
     echo "Cleaning up /var/vm-migration directory..."
-    ssh $PROXMOX_USERNAME@$PROXMOX_SERVER "rm -rf /var/vm-migration/*"
-}
-
-function cleanup_local_ova_files() {
-    echo "Removing local .ova files..."
-    rm -f "$VM_NAME.ova"
+    rm -rf /var/vm-migration/*
 }
 
 # Add an EFI disk to the VM after all other operations have concluded
@@ -136,31 +127,26 @@ function add_efi_disk_to_vm() {
     
     # Create the EFI disk as a logical volume
     echo "Creating EFI disk as a logical volume..."
-    ssh $PROXMOX_USERNAME@$PROXMOX_SERVER "lvcreate -L $efi_disk_size -n $efi_disk $vg_name" || {
+    lvcreate -L $efi_disk_size -n $efi_disk $vg_name || {
         echo "Failed to create EFI disk logical volume."
         exit 1
     }
 
     # Attach the EFI disk to the VM
     echo "Attaching EFI disk to VM..."
-    ssh $PROXMOX_USERNAME@$PROXMOX_SERVER "qm set $VM_ID --efidisk0 $STORAGE_TYPE:$efi_disk,size=$efi_disk_size,efitype=4m,pre-enrolled-keys=1" || {
+    qm set $VM_ID --efidisk0 $STORAGE_TYPE:$efi_disk,size=$efi_disk_size,efitype=4m,pre-enrolled-keys=1 || {
         echo "Failed to add EFI disk to VM."
         exit 1
     }
 }
 
-echo "Migration completed. Please remember to install and start the qemu-guest-agent inside the VM."
-echo "For Debian/Ubuntu: sudo apt-get update && sudo apt-get install qemu-guest-agent"
-echo "For CentOS/RHEL: sudo yum install qemu-guest-agent"
-echo "Then, enable and start the service: sudo systemctl enable --now qemu-guest-agent"
-echo ""
-echo "You will also likely need to update your network interace name on the VM.  This can be done by"
-echo "running ip ad to grab the new interface name and then updating what is stored in /etc/netplan/00-installer-config.yaml"
+#function update_netplan_config() {
+#    
+#}
 
 # Main process
 export_vmware_vm
-transfer_vm
 create_proxmox_vm
 cleanup_migration_directory
-cleanup_local_ova_files
 add_efi_disk_to_vm
+#update_netplan_config
