@@ -11,8 +11,6 @@
 # - Ensure you have key-based authentication configured for any remote connections needed
 # - Hardcode the variables for your ESXi IP, user, etc.
 
-# This script is intended to be run on your Proxmox host
-
 # Function to get user input with a default value
 get_input() {
     read -p "$1 [$2]: " input
@@ -31,11 +29,17 @@ if ! jq --version &> /dev/null; then
     exit 1
 fi
 
+# Check if libguestfs-tools is installed
+if ! virt-customize --version &> /dev/null; then
+    echo "Error: virtu-customize is not installed or not found in PATH. Please install libguestfs-tools and try again"
+    exit 1
+fi
+
 ### Set the following variables to their respective values
 echo "Using hardcoded details for VM migration"
 ESXI_SERVER="default_esxi_server" # Set your ESXi server hostname/IP
 ESXI_USERNAME="root" # Set your ESXi server username
-ESXI_PASSWORD="your_esxi_password" # Set your ESXi server password,
+ESXI_PASSWORD="your_esxi_password" # Set your ESXi server password
 
 VM_NAME=$(get_input "Enter the name of the VM to migrate")
 VLAN_TAG=$(get_input "Enter the VLAN tag" "80")
@@ -92,10 +96,23 @@ function create_proxmox_vm() {
     fi
 
     # Convert the VMDK file to raw format
+    #local raw_file="$VM_NAME.raw"
+    #local raw_path="/var/tmp/$raw_file"
+    #echo "Converting .vmdk file to raw format..."
+    #qemu-img convert -f vmdk -O raw "$vmdk_file" "$raw_path"
+
+    # Convert the VMDK file to raw format
     local raw_file="$VM_NAME.raw"
     local raw_path="/var/tmp/$raw_file"
     echo "Converting .vmdk file to raw format..."
     qemu-img convert -f vmdk -O raw "$vmdk_file" "$raw_path"
+
+    # Install qemu-guest-agent using virt-customize
+    echo "Installing qemu-guest-agent using virt-customize..."
+    virt-customize -a "$raw_path" --install qemu-guest-agent || {
+        echo "Failed to install qemu-guest-agent."
+    exit 1
+    }
 
     # Create the VM with UEFI BIOS, VLAN tag, and specify the SCSI hardware
     echo "Creating VM in Proxmox with UEFI, VLAN tag, and SCSI hardware..."
@@ -139,6 +156,11 @@ function add_efi_disk_to_vm() {
         exit 1
     }
 }
+
+echo "Migration completed"
+echo ""
+echo "You will likely need to update your network interace name on the VM.  This can be done by"
+echo "running ip ad to grab the new interface name and then updating what is stored in /etc/netplan/00-installer-config.yaml"
 
 #function update_netplan_config() {
 #    
