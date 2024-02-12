@@ -119,6 +119,9 @@ function create_proxmox_vm() {
     echo "VM ID is: $VM_ID"
     qm create $VM_ID --name $VM_NAME --memory 2048 --cores 2 --net0 virtio,bridge=vmbr69,tag=$VLAN_TAG --bios ovmf --scsihw virtio-scsi-pci
 
+    echo "Enabling QEMU Guest Agent..."
+    qm set $VM_ID --agent 1
+
     # Import the disk to the selected storage
     echo "Importing disk to $STORAGE_TYPE storage..."
     qm importdisk $VM_ID $raw_path $STORAGE_TYPE
