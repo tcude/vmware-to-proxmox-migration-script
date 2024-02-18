@@ -4,7 +4,7 @@
 #      - Find way to carry over MAC
 #      - Attempt to find way to fix networking post-migration automatically
 #      - Get script to pull specs of ESXi VM and use them when creating Proxmox VM
-#      - Add functionality to remove old .ova files from local machine
+#      - Omit creation of EFI disk upon confirmation of non-EFI BIOS
 
 ### PREREQUISITES ###
 # - Install ovftool on the Proxmox host
@@ -15,6 +15,18 @@
 get_input() {
     read -p "$1 [$2]: " input
     echo ${input:-$2}
+}
+
+# Function to check the firmware type
+check_firmware_type() {
+    local vmx_path="/vmfs/volumes/datastore/${VM_NAME}/${VM_NAME}.vmx"
+    local firmware_type=$(ssh ${ESXI_USERNAME}@${ESXI_SERVER} "grep 'firmware =' ${vmx_path}")
+
+    if [[ $firmware_type == *"efi"* ]]; then
+        echo "uefi"
+    else
+        echo "seabios"
+    fi
 }
 
 # Check if ovftool is installed
@@ -31,7 +43,7 @@ fi
 
 # Check if libguestfs-tools is installed
 if ! virt-customize --version &> /dev/null; then
-    echo "Error: virtu-customize is not installed or not found in PATH. Please install libguestfs-tools and try again"
+    echo "Error: virt-customize is not installed or not found in PATH. Please install libguestfs-tools and try again."
     exit 1
 fi
 
@@ -73,7 +85,6 @@ function export_vmware_vm() {
     echo $ESXI_PASSWORD | ovftool --sourceType=VI --acceptAllEulas --noSSLVerify --skipManifestCheck --diskMode=thin --name=$VM_NAME vi://$ESXI_USERNAME@$ESXI_SERVER/$VM_NAME $ova_file
 }
 
-# Create VM in Proxmox and attach the disk
 function create_proxmox_vm() {
 
     # Extract OVF from OVA
@@ -114,10 +125,12 @@ function create_proxmox_vm() {
     exit 1
     }
 
-    # Create the VM with UEFI BIOS, VLAN tag, and specify the SCSI hardware
-    echo "Creating VM in Proxmox with UEFI, VLAN tag, and SCSI hardware..."
-    echo "VM ID is: $VM_ID"
-    qm create $VM_ID --name $VM_NAME --memory 2048 --cores 2 --net0 virtio,bridge=vmbr69,tag=$VLAN_TAG --bios ovmf --scsihw virtio-scsi-pci
+    # Check the firmware type
+    FIRMWARE_TYPE=$(check_firmware_type)
+
+    # Create the VM with the correct BIOS type
+    echo "Creating VM in Proxmox with $FIRMWARE_TYPE firmware, VLAN tag, and SCSI hardware..."
+    qm create $VM_ID --name $VM_NAME --memory 2048 --cores 2 --net0 virtio,bridge=vmbr69,tag=$VLAN_TAG --bios $FIRMWARE_TYPE --scsihw virtio-scsi-pci
 
     echo "Enabling QEMU Guest Agent..."
     qm set $VM_ID --agent 1
@@ -144,7 +157,7 @@ function add_efi_disk_to_vm() {
     local vg_name="pve" # The actual LVM volume group name
     local efi_disk_size="4M"
     local efi_disk="vm-$VM_ID-disk-1"
-    
+
     # Create the EFI disk as a logical volume
     echo "Creating EFI disk as a logical volume..."
     lvcreate -L $efi_disk_size -n $efi_disk $vg_name || {
@@ -160,18 +173,8 @@ function add_efi_disk_to_vm() {
     }
 }
 
-echo "Migration completed"
-echo ""
-echo "You will likely need to update your network interace name on the VM.  This can be done by"
-echo "running ip ad to grab the new interface name and then updating what is stored in /etc/netplan/00-installer-config.yaml"
-
-#function update_netplan_config() {
-#    
-#}
-
 # Main process
 export_vmware_vm
 create_proxmox_vm
 cleanup_migration_directory
 add_efi_disk_to_vm
-#update_netplan_config
