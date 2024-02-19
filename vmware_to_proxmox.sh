@@ -47,6 +47,12 @@ if ! virt-customize --version &> /dev/null; then
     exit 1
 fi
 
+### Set the following variables to their respective values
+echo "Using hardcoded details for VM migration"
+ESXI_SERVER="default_esxi_server" # Set your ESXi server hostname/IP
+ESXI_USERNAME="root" # Set your ESXi server username
+ESXI_PASSWORD="your_esxi_password" # Set your ESXi server password
+
 VM_NAME=$(get_input "Enter the name of the VM to migrate")
 VLAN_TAG=$(get_input "Enter the VLAN tag" "80")
 VM_ID=$(get_input "Enter the VM ID you would like to use in Proxmox")
