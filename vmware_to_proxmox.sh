@@ -47,12 +47,6 @@ if ! virt-customize --version &> /dev/null; then
     exit 1
 fi
 
-### Set the following variables to their respective values
-echo "Using hardcoded details for VM migration"
-ESXI_SERVER="default_esxi_server" # Set your ESXi server hostname/IP
-ESXI_USERNAME="root" # Set your ESXi server username
-ESXI_PASSWORD="your_esxi_password" # Set your ESXi server password
-
 VM_NAME=$(get_input "Enter the name of the VM to migrate")
 VLAN_TAG=$(get_input "Enter the VLAN tag" "80")
 VM_ID=$(get_input "Enter the VM ID you would like to use in Proxmox")
@@ -130,7 +124,7 @@ function create_proxmox_vm() {
 
     # Create the VM with the correct BIOS type
     echo "Creating VM in Proxmox with $FIRMWARE_TYPE firmware, VLAN tag, and SCSI hardware..."
-    qm create $VM_ID --name $VM_NAME --memory 2048 --cores 2 --net0 virtio,bridge=vmbr69,tag=$VLAN_TAG --bios $FIRMWARE_TYPE --scsihw virtio-scsi-pci
+    qm create $VM_ID --name $VM_NAME --memory 2048 --cores 2 --net0 virtio,bridge=vmbr0,tag=$VLAN_TAG --bios $FIRMWARE_TYPE --scsihw virtio-scsi-pci --scsi0 local-lvm:vm-$VM_ID-disk-0,discard=on
 
     echo "Enabling QEMU Guest Agent..."
     qm set $VM_ID --agent 1
@@ -177,4 +171,11 @@ function add_efi_disk_to_vm() {
 export_vmware_vm
 create_proxmox_vm
 cleanup_migration_directory
-add_efi_disk_to_vm
+
+# Check the firmware type and conditionally add EFI disk
+FIRMWARE_TYPE=$(check_firmware_type)
+if [ "$FIRMWARE_TYPE" == "uefi" ]; then
+    add_efi_disk_to_vm
+else
+    echo "Skipping EFI disk creation for non-UEFI firmware type."
+fi
