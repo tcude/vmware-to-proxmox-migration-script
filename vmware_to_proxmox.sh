@@ -130,7 +130,7 @@ function create_proxmox_vm() {
 
     # Create the VM with the correct BIOS type
     echo "Creating VM in Proxmox with $FIRMWARE_TYPE firmware, VLAN tag, and SCSI hardware..."
-    qm create $VM_ID --name $VM_NAME --memory 2048 --cores 2 --net0 virtio,bridge=vmbr0,tag=$VLAN_TAG --bios $FIRMWARE_TYPE --scsihw virtio-scsi-pci --scsi0 local-lvm:vm-$VM_ID-disk-0,discard=on
+    qm create $VM_ID --name $VM_NAME --memory 2048 --cores 2 --net0 virtio,bridge=vmbr69,tag=$VLAN_TAG --bios $FIRMWARE_TYPE --scsihw virtio-scsi-pci
 
     echo "Enabling QEMU Guest Agent..."
     qm set $VM_ID --agent 1
@@ -143,6 +143,10 @@ function create_proxmox_vm() {
     local disk_name="vm-$VM_ID-disk-0"
     echo "Attaching disk to VM and setting it as the first boot device..."
     qm set $VM_ID --scsi0 $STORAGE_TYPE:$disk_name --boot c --bootdisk scsi0
+
+    # Enable discard functionality for the disk
+    echo "Enabling discard functionality"
+    qm set $VM_ID --scsi0 $STORAGE_TYPE:$disk_name,discard=on
 }
 
 # Clear out temp files from /var/vm-migrations
