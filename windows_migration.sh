@@ -1,14 +1,7 @@
 #!/bin/bash
-# To-do:
-#      - Add ability to choose between local-lvm and local-zfs
-#      - Find way to carry over MAC
-#      - Attempt to find way to fix networking post-migration automatically
-#      - Get script to pull specs of ESXi VM and use them when creating Proxmox VM
-#      - Omit creation of EFI disk upon confirmation of non-EFI BIOS
 
 ### PREREQUISITES ###
-# - Install ovftool on the Proxmox host
-# - Ensure you have key-based authentication configured for any remote connections needed
+# - Install ovftool on the Proxmox host - https://developer.vmware.com/web/tool/ovf/
 # - Hardcode the variables for your ESXi IP, user, etc.
 
 # Function to get user input with a default value
@@ -17,9 +10,9 @@ get_input() {
     echo ${input:-$2}
 }
 
+# Function to check the firmware/BIOS type
 check_firmware_type() {
     local vmx_path="/vmfs/volumes/datastore/${VM_NAME}/${VM_NAME}.vmx"
-    # Use sshpass with the hardcoded password
     local firmware_type=$(sshpass -p "${ESXI_PASSWORD}" ssh -o StrictHostKeyChecking=no ${ESXI_USERNAME}@${ESXI_SERVER} "grep 'firmware =' ${vmx_path}")
 
     if [[ $firmware_type == *"efi"* ]]; then
@@ -71,7 +64,6 @@ fi
 
 # Export VM from VMware
 function export_vmware_vm() {
-    #local ova_file="/var/vm-migration/$VM_NAME.ova"
     local ova_file="/mnt/vm-migration/$VM_NAME.ova"
     if [ -f "$ova_file" ]; then
         read -p "File $ova_file already exists. Overwrite? (y/n) [y]: " choice
@@ -90,11 +82,9 @@ function create_proxmox_vm() {
 
     # Extract OVF from OVA
     echo "Extracting OVF from OVA..."
-    #tar -xvf /var/vm-migration/$VM_NAME.ova -C /var/vm-migration/
     tar -xvf /mnt/vm-migration/$VM_NAME.ova -C /mnt/vm-migration/
 
     # Find the OVF file
-    #local ovf_file=$(find /var/vm-migration -name '*.ovf')
     local ovf_file=$(find /mnt/vm-migration -name '*.ovf')
     echo "Found OVF file: $ovf_file"
 
@@ -110,30 +100,17 @@ function create_proxmox_vm() {
     fi
 
     # Convert the VMDK file to raw format
-    #local raw_file="$VM_NAME.raw"
-    #local raw_path="/var/tmp/$raw_file"
-    #echo "Converting .vmdk file to raw format..."
-    #qemu-img convert -f vmdk -O raw "$vmdk_file" "$raw_path"
-
-    # Convert the VMDK file to raw format
     local raw_file="$VM_NAME.raw"
     local raw_path="/mnt/vm-migration/$raw_file"
     echo "Converting .vmdk file to raw format..."
     qemu-img convert -f vmdk -O raw "$vmdk_file" "$raw_path"
 
-    # Install qemu-guest-agent using virt-customize
-    #echo "Installing qemu-guest-agent using virt-customize..."
-    #virt-customize -a "$raw_path" --install qemu-guest-agent || {
-    #    echo "Failed to install qemu-guest-agent."
-    #exit 1
-    #}
-
     # Check the firmware type
     FIRMWARE_TYPE=$(check_firmware_type)
 
-    # Create the VM with the correct BIOS type
+    # Create the VM and set various options such as BIOS type
     echo "Creating VM in Proxmox with $FIRMWARE_TYPE firmware, VLAN tag, and SCSI hardware..."
-    qm create $VM_ID --name $VM_NAME --memory 2048 --cores 2 --net0 virtio,bridge=vmbr69,tag=$VLAN_TAG --bios $FIRMWARE_TYPE --scsihw virtio-scsi-pci
+    qm create $VM_ID --name $VM_NAME --memory 2048 --cores 2 --net0 virtio,bridge=vmbr0,tag=$VLAN_TAG --bios $FIRMWARE_TYPE --scsihw virtio-scsi-pci
 
     echo "Enabling QEMU Guest Agent..."
     qm set $VM_ID --agent 1
