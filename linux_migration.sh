@@ -71,7 +71,8 @@ fi
 
 # Export VM from VMware
 function export_vmware_vm() {
-    local ova_file="/var/vm-migration/$VM_NAME.ova"
+    #local ova_file="/var/vm-migration/$VM_NAME.ova"
+    local ova_file="/mnt/vm-migration/$VM_NAME.ova"
     if [ -f "$ova_file" ]; then
         read -p "File $ova_file already exists. Overwrite? (y/n) [y]: " choice
         choice=${choice:-y}
@@ -89,15 +90,17 @@ function create_proxmox_vm() {
 
     # Extract OVF from OVA
     echo "Extracting OVF from OVA..."
-    tar -xvf /var/vm-migration/$VM_NAME.ova -C /var/vm-migration/
+    #tar -xvf /var/vm-migration/$VM_NAME.ova -C /var/vm-migration/
+    tar -xvf /mnt/vm-migration/$VM_NAME.ova -C /mnt/vm-migration/
 
     # Find the OVF file
-    local ovf_file=$(find /var/vm-migration -name '*.ovf')
+    #local ovf_file=$(find /var/vm-migration -name '*.ovf')
+    local ovf_file=$(find /mnt/vm-migration -name '*.ovf')
     echo "Found OVF file: $ovf_file"
 
     # Find the VMDK file
     echo "Finding .vmdk file..."
-    local vmdk_file=$(find /var/vm-migration -name "$VM_NAME-disk*.vmdk")
+    local vmdk_file=$(find /mnt/vm-migration -name "$VM_NAME-disk*.vmdk")
     echo "Found .vmdk file: $vmdk_file"
 
     # Ensure that only one .vmdk file is found
@@ -114,7 +117,7 @@ function create_proxmox_vm() {
 
     # Convert the VMDK file to raw format
     local raw_file="$VM_NAME.raw"
-    local raw_path="/var/tmp/$raw_file"
+    local raw_path="/mnt/vm-migration/$raw_file"
     echo "Converting .vmdk file to raw format..."
     qemu-img convert -f vmdk -O raw "$vmdk_file" "$raw_path"
 
@@ -151,8 +154,8 @@ function create_proxmox_vm() {
 
 # Clear out temp files from /var/vm-migrations
 function cleanup_migration_directory() {
-    echo "Cleaning up /var/vm-migration directory..."
-    rm -rf /var/vm-migration/*
+    echo "Cleaning up /mnt/vm-migration directory..."
+    rm -rf /mnt/vm-migration/*
 }
 
 # Add an EFI disk to the VM after all other operations have concluded
