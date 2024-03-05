@@ -10,18 +10,6 @@ get_input() {
     echo ${input:-$2}
 }
 
-# Function to check the firmware/BIOS type
-check_firmware_type() {
-    local vmx_path="/vmfs/volumes/datastore/${VM_NAME}/${VM_NAME}.vmx"
-    local firmware_type=$(sshpass -p "${ESXI_PASSWORD}" ssh -o StrictHostKeyChecking=no ${ESXI_USERNAME}@${ESXI_SERVER} "grep 'firmware =' ${vmx_path}")
-
-    if [[ $firmware_type == *"efi"* ]]; then
-        echo "uefi"
-    else
-        echo "seabios"
-    fi
-}
-
 # Check if ovftool is installed
 if ! ovftool --version &> /dev/null; then
     echo "Error: ovftool is not installed or not found in PATH. Please install ovftool and try again."
@@ -50,6 +38,14 @@ VM_NAME=$(get_input "Enter the name of the VM to migrate")
 VLAN_TAG=$(get_input "Enter the VLAN tag" "80")
 VM_ID=$(get_input "Enter the VM ID you would like to use in Proxmox")
 STORAGE_TYPE=$(get_input "Enter the storage type (local-lvm or local-zfs)" "local-lvm")
+FIRMWARE_TYPE=$(get_input "Does the VM use UEFI firmware? (yes/no)" "no")
+
+# Convert user input for firmware type into a format used by the script
+if [ "$FIRMWARE_TYPE" == "yes" ]; then
+    FIRMWARE_TYPE="ovmf"  # Correct setting for UEFI firmware in Proxmox
+else
+    FIRMWARE_TYPE="seabios"  # Default BIOS setting
+fi
 
 # Check if a VM with the given ID already exists before proceeding
 if qm status $VM_ID &> /dev/null; then
@@ -113,9 +109,6 @@ function create_proxmox_vm() {
     exit 1
     }
 
-    # Check the firmware type
-    FIRMWARE_TYPE=$(check_firmware_type)
-
     # Create the VM and set various options such as BIOS type
     echo "Creating VM in Proxmox with $FIRMWARE_TYPE firmware, VLAN tag, and SCSI hardware..."
     qm create $VM_ID --name $VM_NAME --memory 2048 --cores 2 --net0 virtio,bridge=vmbr0,tag=$VLAN_TAG --bios $FIRMWARE_TYPE --scsihw virtio-scsi-pci
@@ -143,26 +136,29 @@ function cleanup_migration_directory() {
     rm -rf /mnt/vm-migration/*
 }
 
+# Retrieve the actual LVM volume group name
+vg_name=$(vgdisplay | awk '/VG Name/ {print $3}')
+
 # Add an EFI disk to the VM after all other operations have concluded
 function add_efi_disk_to_vm() {
-    echo "Adding EFI disk to the VM..."
-    local vg_name="pve" # The actual LVM volume group name
-    local efi_disk_size="4M"
-    local efi_disk="vm-$VM_ID-disk-1"
+  echo "Adding EFI disk to the VM..."
+  local vg_name="nvme" # Adjusted to the correct volume group name if necessary
+  local efi_disk_size="4M"
+  local efi_disk="vm-$VM_ID-disk-1"
 
-    # Create the EFI disk as a logical volume
-    echo "Creating EFI disk as a logical volume..."
-    lvcreate -L $efi_disk_size -n $efi_disk $vg_name || {
-        echo "Failed to create EFI disk logical volume."
-        exit 1
-    }
+  # Ensure correct volume group name is used
+  echo "Creating EFI disk as a logical volume in volume group $vg_name..."
+  lvcreate -L $efi_disk_size -n $efi_disk $vg_name || {
+    echo "Failed to create EFI disk logical volume."
+    exit 1
+  }
 
-    # Attach the EFI disk to the VM
-    echo "Attaching EFI disk to VM..."
-    qm set $VM_ID --efidisk0 $STORAGE_TYPE:$efi_disk,size=$efi_disk_size,efitype=4m,pre-enrolled-keys=1 || {
-        echo "Failed to add EFI disk to VM."
-        exit 1
-    }
+  # Attach EFI disk
+  echo "Attaching EFI disk to VM..."
+  qm set $VM_ID --efidisk0 $vg_name:$efi_disk,size=$efi_disk_size,efitype=4m,pre-enrolled-keys=1 || {
+    echo "Failed to add EFI disk to VM."
+    exit 1
+  }
 }
 
 # Main process
@@ -170,9 +166,8 @@ export_vmware_vm
 create_proxmox_vm
 cleanup_migration_directory
 
-# Check the firmware type and conditionally add EFI disk
-FIRMWARE_TYPE=$(check_firmware_type)
-if [ "$FIRMWARE_TYPE" == "uefi" ]; then
+# Add EFI disk based on the user's input
+if [ "$FIRMWARE_TYPE" == "ovmf" ]; then  # Correct check for UEFI firmware
     add_efi_disk_to_vm
 else
     echo "Skipping EFI disk creation for non-UEFI firmware type."
