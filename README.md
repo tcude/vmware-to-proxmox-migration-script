@@ -29,5 +29,5 @@ Your feedback and contributions are welcome! If you encounter issues, have sugge
 
 ## License
 
-This project is released under the [MIT License](LICENSE.md).
+This project is released under the [MIT License](LICENSE).
 
