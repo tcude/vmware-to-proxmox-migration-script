@@ -6,27 +6,20 @@
 
 # Function to get user input with a default value
 get_input() {
-    read -p "$1 [$2]: " input
-    echo ${input:-$2}
+    read -rp "$1 [$2]: " input
+    echo "${input:-$2}"
 }
 
-# Check if ovftool is installed
-if ! ovftool --version &> /dev/null; then
-    echo "Error: ovftool is not installed or not found in PATH. Please install ovftool and try again."
-    exit 1
-fi
+# Array of required tools
+required_tools=("ovftool" "jq" "virt-customize")
 
-# Check if jq is installed
-if ! jq --version &> /dev/null; then
-    echo "Error: jq is not installed or not found in PATH. Please install jq and try again."
-    exit 1
-fi
-
-# Check if libguestfs-tools is installed
-if ! virt-customize --version &> /dev/null; then
-    echo "Error: virt-customize is not installed or not found in PATH. Please install libguestfs-tools and try again."
-    exit 1
-fi
+# Check if required tools are installed
+for tool in "${required_tools[@]}"; do
+    if ! command -v "$tool" &> /dev/null; then
+        echo "Error: $tool is not installed or not found in PATH. Please install $tool and try again."
+        exit 1
+    fi
+done
 
 ### Set the following variables to their respective values
 echo "Using hardcoded details for VM migration"
@@ -47,23 +40,28 @@ else
     FIRMWARE_TYPE="seabios"  # Default BIOS setting
 fi
 
-# Check if a VM with the given ID already exists before proceeding
-if qm status $VM_ID &> /dev/null; then
-    echo "Error: VM with ID '$VM_ID' already exists. Please enter a different ID."
-    exit 1
-fi
+# Validate VM ID before proceeding
+validate_vm_id() {
+    # Check if VM with the given ID already exists
+    if qm status "$VM_ID" &> /dev/null; then
+        echo "Error: VM with ID '$VM_ID' already exists. Please enter a different ID."
+        exit 1
+    fi
 
-if ! [[ $VM_ID =~ ^[0-9]+$ ]] || [[ $VM_ID -le 99 ]]; then
-    echo "Error: Invalid VM ID '$VM_ID'. Please enter a numeric value greater than 99."
-    exit 1
-fi
+    # Ensure VM ID is numeric and greater than 99
+    if ! [[ $VM_ID =~ ^[0-9]+$ ]] || [[ $VM_ID -le 99 ]]; then
+        echo "Error: Invalid VM ID '$VM_ID'. Please enter a numeric value greater than 99."
+        exit 1
+    fi
+}
 
-# Export VM from VMware
-function export_vmware_vm() {
-    #local ova_file="/var/vm-migration/$VM_NAME.ova"
+# Function to export VM from VMware
+export_vmware_vm() {
     local ova_file="/mnt/vm-migration/$VM_NAME.ova"
+
+    # Check if the OVA file already exists and confirm overwrite
     if [ -f "$ova_file" ]; then
-        read -p "File $ova_file already exists. Overwrite? (y/n) [y]: " choice
+        read -rp "File $ova_file already exists. Overwrite? (y/n) [y]: " choice
         choice=${choice:-y}
         if [ "$choice" != "y" ]; then
             echo "Export cancelled."
@@ -71,67 +69,69 @@ function export_vmware_vm() {
         fi
         rm -f "$ova_file"
     fi
+
+    # Export VM from VMware to Proxmox
     echo "Exporting VM from VMware directly to Proxmox..."
-    echo $ESXI_PASSWORD | ovftool --sourceType=VI --acceptAllEulas --noSSLVerify --skipManifestCheck --diskMode=thin --name=$VM_NAME vi://$ESXI_USERNAME@$ESXI_SERVER/$VM_NAME $ova_file
+    echo "$ESXI_PASSWORD" | ovftool --sourceType=VI --acceptAllEulas --noSSLVerify --skipManifestCheck --diskMode=thin --name="$VM_NAME" "vi://$ESXI_USERNAME@$ESXI_SERVER/$VM_NAME" "$ova_file"
 }
 
-function create_proxmox_vm() {
+create_proxmox_vm() {
+    local migration_dir="/mnt/vm-migration"
+    local ova_file="${migration_dir}/${VM_NAME}.ova"
+    local raw_file="${VM_NAME}.raw"
+    local raw_path="${migration_dir}/${raw_file}"
 
-    # Extract OVF from OVA
-    echo "Extracting OVF from OVA..."
-    tar -xvf /mnt/vm-migration/$VM_NAME.ova -C /mnt/vm-migration/
+    echo "Extracting OVF and VMDK from OVA..."
+    tar -xvf "$ova_file" -C "$migration_dir"
 
-    # Find the OVF file
-    local ovf_file=$(find /mnt/vm-migration -name '*.ovf')
+    local ovf_file vmdk_file vmdk_count
+    ovf_file=$(find "$migration_dir" -name '*.ovf')
     echo "Found OVF file: $ovf_file"
 
-    # Find the VMDK file
-    echo "Finding .vmdk file..."
-    local vmdk_file=$(find /mnt/vm-migration -name "$VM_NAME-disk*.vmdk")
-    echo "Found .vmdk file: $vmdk_file"
+    vmdk_file=$(find "$migration_dir" -name "${VM_NAME}-disk*.vmdk")
+    vmdk_count=$(find "$migration_dir" -name "${VM_NAME}-disk*.vmdk" | wc -l)
+    if [ "$vmdk_count" -ne 1 ]; then
+        echo "Error: Multiple or no .vmdk files found."
+        exit 1
+    fi
+    echo "Found VMDK file: $vmdk_file"
 
-    # Ensure that only one .vmdk file is found
-    if [[ $(echo "$vmdk_file" | wc -l) -ne 1 ]]; then
-       echo "Error: Multiple or no .vmdk files found."
-       exit 1
+    echo "Converting VMDK to raw format..."
+    if ! qemu-img convert -f vmdk -O raw "$vmdk_file" "$raw_path"; then
+        echo "Failed to convert VMDK to raw format."
+        exit 1
     fi
 
-    # Convert the VMDK file to raw format
-    local raw_file="$VM_NAME.raw"
-    local raw_path="/mnt/vm-migration/$raw_file"
-    echo "Converting .vmdk file to raw format..."
-    qemu-img convert -f vmdk -O raw "$vmdk_file" "$raw_path"
-
-    # Install qemu-guest-agent using virt-customize
-    echo "Installing qemu-guest-agent using virt-customize..."
-    virt-customize -a "$raw_path" --install qemu-guest-agent || {
+    echo "Installing qemu-guest-agent..."
+    if ! virt-customize -a "$raw_path" --install qemu-guest-agent; then
         echo "Failed to install qemu-guest-agent."
-    exit 1
-    }
+        exit 1
+    fi
 
-    # Create the VM and set various options such as BIOS type
-    echo "Creating VM in Proxmox with $FIRMWARE_TYPE firmware, VLAN tag, and SCSI hardware..."
-    qm create $VM_ID --name $VM_NAME --memory 2048 --cores 2 --net0 virtio,bridge=vmbr0,tag=$VLAN_TAG --bios $FIRMWARE_TYPE --scsihw virtio-scsi-pci
+    echo "Creating and configuring VM in Proxmox..."
+    if ! qm create "$VM_ID" --name "$VM_NAME" --memory 2048 --cores 2 \
+        --net0 virtio,bridge=vmbr0,tag="$VLAN_TAG" --bios "$FIRMWARE_TYPE" --scsihw virtio-scsi-pci \
+        --agent 1; then
+        echo "Failed to create VM."
+        exit 1
+    fi
 
-    echo "Enabling QEMU Guest Agent..."
-    qm set $VM_ID --agent 1
+    if ! qm importdisk "$VM_ID" "$raw_path" "$STORAGE_TYPE"; then
+        echo "Failed to import disk."
+        exit 1
+    fi
 
-    # Import the disk to the selected storage
-    echo "Importing disk to $STORAGE_TYPE storage..."
-    qm importdisk $VM_ID $raw_path $STORAGE_TYPE
+    local disk_name="vm-${VM_ID}-disk-0"
+    if ! qm set "$VM_ID" --scsi0 "${STORAGE_TYPE}:${disk_name}" --boot c --bootdisk scsi0 --scsi0 "${STORAGE_TYPE}:${disk_name},discard=on"; then
+        echo "Failed to configure VM disk and boot options."
+        exit 1
+    fi
 
-    # Attach the disk to the VM and set it as the first boot device
-    local disk_name="vm-$VM_ID-disk-0"
-    echo "Attaching disk to VM and setting it as the first boot device..."
-    qm set $VM_ID --scsi0 $STORAGE_TYPE:$disk_name --boot c --bootdisk scsi0
-
-    # Enable discard functionality for the disk
-    echo "Enabling discard functionality"
-    qm set $VM_ID --scsi0 $STORAGE_TYPE:$disk_name,discard=on
+    echo "VM creation and configuration complete."
 }
 
 # Clear out temp files from /var/vm-migrations
-function cleanup_migration_directory() {
+cleanup_migration_directory() {
     echo "Cleaning up /mnt/vm-migration directory..."
     rm -rf /mnt/vm-migration/*
 }
@@ -140,28 +140,29 @@ function cleanup_migration_directory() {
 vg_name=$(vgdisplay | awk '/VG Name/ {print $3}')
 
 # Add an EFI disk to the VM after all other operations have concluded
-function add_efi_disk_to_vm() {
-  echo "Adding EFI disk to the VM..."
-  local vg_name="nvme" # Adjusted to the correct volume group name if necessary
-  local efi_disk_size="4M"
-  local efi_disk="vm-$VM_ID-disk-1"
+add_efi_disk_to_vm() {
+    echo "Adding EFI disk to the VM..."
+    local vg_name="nvme"  # Volume group name, adjust if necessary
+    local efi_disk_size="4M"
+    local efi_disk="vm-$VM_ID-disk-1"
 
-  # Ensure correct volume group name is used
-  echo "Creating EFI disk as a logical volume in volume group $vg_name..."
-  lvcreate -L $efi_disk_size -n $efi_disk $vg_name || {
-    echo "Failed to create EFI disk logical volume."
-    exit 1
-  }
+    # Create EFI disk as a logical volume
+    if ! lvcreate -L "$efi_disk_size" -n "$efi_disk" "$vg_name"; then
+        echo "Failed to create EFI disk logical volume."
+        exit 1
+    fi
 
-  # Attach EFI disk
-  echo "Attaching EFI disk to VM..."
-  qm set $VM_ID --efidisk0 $vg_name:$efi_disk,size=$efi_disk_size,efitype=4m,pre-enrolled-keys=1 || {
-    echo "Failed to add EFI disk to VM."
-    exit 1
-  }
+    echo "Attaching EFI disk to VM..."
+    if ! qm set "$VM_ID" --efidisk0 "${vg_name}:${efi_disk},size=${efi_disk_size},efitype=4m,pre-enrolled-keys=1"; then
+        echo "Failed to add EFI disk to VM."
+        exit 1
+    fi
+
+    echo "EFI disk successfully added to VM."
 }
 
 # Main process
+validate_vm_id
 export_vmware_vm
 create_proxmox_vm
 cleanup_migration_directory
