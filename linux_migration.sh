@@ -37,7 +37,7 @@ ESXI_PASSWORD="your_esxi_password" # Set your ESXi server password
 VM_NAME=$(get_input "Enter the name of the VM to migrate")
 VLAN_TAG=$(get_input "Enter the VLAN tag" "80")
 VM_ID=$(get_input "Enter the VM ID you would like to use in Proxmox")
-STORAGE_TYPE=$(get_input "Enter the storage type (local-lvm or local-zfs)" "local-lvm")
+STORAGE_TYPE=$(get_input "Enter the storage name (for example local-lvm or local-zfs)" "local-lvm")
 FIRMWARE_TYPE=$(get_input "Does the VM use UEFI firmware? (yes/no)" "no")
 
 # Convert user input for firmware type into a format used by the script
@@ -60,17 +60,33 @@ fi
 
 # Export VM from VMware
 function export_vmware_vm() {
-    #local ova_file="/var/vm-migration/$VM_NAME.ova"
     local ova_file="/mnt/vm-migration/$VM_NAME.ova"
     if [ -f "$ova_file" ]; then
         read -p "File $ova_file already exists. Overwrite? (y/n) [y]: " choice
         choice=${choice:-y}
-        if [ "$choice" != "y" ]; then
-            echo "Export cancelled."
-            exit 1
-        fi
-        rm -f "$ova_file"
+        case $choice in
+            [Yy]* )
+                rm -f "$ova_file"
+                do_vmware_vm_export
+                ;;
+            * )
+                read -p "Skip fresh import and re-use existing ova file? (y/n) [n]" reuse
+                reuse=${reuse:-n}
+                case $reuse in
+                    [Yy]* ) return ;;
+                    * )
+                        echo "Export cancelled."
+                        exit 1
+                    ;;
+                esac
+            ;;
+        esac
+    else
+        do_vmware_vm_export
     fi
+}
+
+function do_vmware_vm_export() {
     echo "Exporting VM from VMware directly to Proxmox..."
     echo $ESXI_PASSWORD | ovftool --sourceType=VI --acceptAllEulas --noSSLVerify --skipManifestCheck --diskMode=thin --name=$VM_NAME vi://$ESXI_USERNAME@$ESXI_SERVER/$VM_NAME $ova_file
 }
@@ -85,26 +101,21 @@ function create_proxmox_vm() {
     local ovf_file=$(find /mnt/vm-migration -name '*.ovf')
     echo "Found OVF file: $ovf_file"
 
-    # Find the VMDK file
-    echo "Finding .vmdk file..."
-    local vmdk_file=$(find /mnt/vm-migration -name "$VM_NAME-disk*.vmdk")
-    echo "Found .vmdk file: $vmdk_file"
-
-    # Ensure that only one .vmdk file is found
-    if [[ $(echo "$vmdk_file" | wc -l) -ne 1 ]]; then
-       echo "Error: Multiple or no .vmdk files found."
+    # Ensure that at least one .vmdk file exists
+    if [[ $(find /mnt/vm-migration -name "$VM_NAME-disk*.vmdk" | wc -l) -eq 0 ]]; then
+       echo "Error: No vmdk files found."
        exit 1
     fi
 
-    # Convert the VMDK file to raw format
-    local raw_file="$VM_NAME.raw"
-    local raw_path="/mnt/vm-migration/$raw_file"
-    echo "Converting .vmdk file to raw format..."
-    qemu-img convert -f vmdk -O raw "$vmdk_file" "$raw_path"
+    NUM_DISKS=$(find /mnt/vm-migration -name "$VM_NAME-disk*.vmdk" | wc -l)
+
+    for ((i=1;i<=$NUM_DISKS;i++)); do
+        convert_disk $i;
+    done
 
     # Install qemu-guest-agent using virt-customize
     echo "Installing qemu-guest-agent using virt-customize..."
-    virt-customize -a "$raw_path" --install qemu-guest-agent || {
+    virt-customize -a "/mnt/vm-migration/$VM_NAME-disk1.raw" --install qemu-guest-agent || {
         echo "Failed to install qemu-guest-agent."
     exit 1
     }
@@ -116,18 +127,37 @@ function create_proxmox_vm() {
     echo "Enabling QEMU Guest Agent..."
     qm set $VM_ID --agent 1
 
-    # Import the disk to the selected storage
-    echo "Importing disk to $STORAGE_TYPE storage..."
-    qm importdisk $VM_ID $raw_path $STORAGE_TYPE
+    # Add disks to VM (and assume first disk is the OS/boot disk)
+    for ((i=1;i<=$NUM_DISKS;i++)); do
+        add_disk $i;
+    done
+}
 
-    # Attach the disk to the VM and set it as the first boot device
-    local disk_name="vm-$VM_ID-disk-0"
-    echo "Attaching disk to VM and setting it as the first boot device..."
-    qm set $VM_ID --scsi0 $STORAGE_TYPE:$disk_name --boot c --bootdisk scsi0
+function convert_disk() {
+    local working_path="/mnt/vm-migration/$VM_NAME-disk$1"
+    echo "Converting .vmdk file $i to raw format..."
+    qemu-img convert -f vmdk -O raw "$working_path.vmdk" "$working_path.raw"
+}
+
+function add_disk() {
+
+    # Import the disk to the selected storage
+    echo "Importing disk $1 to $STORAGE_TYPE storage..."
+    qm importdisk $VM_ID /mnt/vm-migration/$VM_NAME-disk$1.raw $STORAGE_TYPE
+
+    # Attach the disk to the VM and set it as the first boot device if disk 1
+    local disk_name="vm-$VM_ID-disk-$(expr $1 - 1)"
+    if [[ $1 -eq 1 ]]; then
+        echo "Attaching disk 1 to VM and setting it as the boot device..."
+        qm set $VM_ID --scsi$(expr $1 - 1) $STORAGE_TYPE:$disk_name --boot c --bootdisk scsi$(expr $1 - 1)
+    else
+        echo "Attaching additional disk to VM..."
+        qm set $VM_ID --scsi$(expr $1 - 1) $STORAGE_TYPE:$disk_name
+    fi
 
     # Enable discard functionality for the disk
     echo "Enabling discard functionality"
-    qm set $VM_ID --scsi0 $STORAGE_TYPE:$disk_name,discard=on
+    qm set $VM_ID --scsi$(expr $1 - 1) $STORAGE_TYPE:$disk_name,discard=on
 }
 
 # Clear out temp files from /var/vm-migrations
