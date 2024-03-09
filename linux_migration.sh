@@ -73,7 +73,7 @@ function export_vmware_vm() {
                 read -p "Skip fresh import and re-use existing ova file? (y/n) [n]" reuse
                 reuse=${reuse:-n}
                 case $reuse in
-                    [Yy]* ) break ;;
+                    [Yy]* ) return ;;
                     * )
                         echo "Export cancelled."
                         exit 1
